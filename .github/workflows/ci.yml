@@ -1,0 +1,55 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests + mypy (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Pure-Python install. The mypyc build is exercised separately below,
+      # since it is slower and only the deployed artifact uses it.
+      - name: Install
+        run: pip install . mypy
+
+      - name: mypy --strict
+        run: mypy --strict wan_healthcheck.py
+
+      - name: Unit tests
+        run: python -m unittest discover -s . -p 'test_*.py' -v
+
+  mypyc-build:
+    name: mypyc compiled build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # A stale .mypy_cache hides real failures here, so build from clean.
+      # mypyc type checks inside pip's isolated build env, where only
+      # [build-system] requires exists - this is what catches a dependency
+      # missing from that list.
+      - name: Build with mypyc and import it
+        run: |
+          rm -rf build *.egg-info .mypy_cache
+          WAN_HEALTHCHECK_MYPYC=1 pip install .
+          cd /tmp && python -c "import wan_healthcheck; print(wan_healthcheck.__file__)"
+          wan_healthcheck --help
