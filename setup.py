@@ -8,6 +8,6 @@ from setuptools import setup
 if os.environ.get("WAN_HEALTHCHECK_MYPYC") == "1":
     from mypyc.build import mypycify
 
-    setup(ext_modules=mypycify(["wan_healthcheck.py"]))
+    setup(ext_modules=mypycify(["wan_healthcheck/"]))
 else:
     setup()

@@ -9,7 +9,7 @@ on:
 
 jobs:
   test:
-    name: Tests + mypy (py${{ matrix.python-version }})
+    name: black + mypy + tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -23,15 +23,21 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       # Pure-Python install. The mypyc build is exercised separately below,
-      # since it is slower and only the deployed artifact uses it.
+      # since it is slower and only some deployments use it.
       - name: Install
-        run: pip install . mypy
+        run: pip install -e '.[dev]'
+
+      - name: black --check
+        run: black --check --diff wan_healthcheck/ tests/
 
       - name: mypy --strict
-        run: mypy --strict wan_healthcheck.py
+        run: mypy --strict wan_healthcheck/
 
-      - name: Unit tests
-        run: python -m unittest discover -s . -p 'test_*.py' -v
+      # Run serially on purpose: pytest-xdist is available, but measured at
+      # this suite size `-n auto` takes ~5.1s against ~1.8s serial because
+      # worker startup dominates. Revisit if the suite grows.
+      - name: Tests
+        run: pytest -v
 
   mypyc-build:
     name: mypyc compiled build
@@ -43,13 +49,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      # A stale .mypy_cache hides real failures here, so build from clean.
-      # mypyc type checks inside pip's isolated build env, where only
-      # [build-system] requires exists - this is what catches a dependency
-      # missing from that list.
+      # Built from clean: a stale .mypy_cache hides real failures here. mypyc
+      # type checks inside pip's isolated build env, where only
+      # [build-system] requires exists - this is what catches a runtime
+      # dependency missing from that list.
       - name: Build with mypyc and import it
         run: |
           rm -rf build *.egg-info .mypy_cache
           WAN_HEALTHCHECK_MYPYC=1 pip install .
-          cd /tmp && python -c "import wan_healthcheck; print(wan_healthcheck.__file__)"
+          cd /tmp && python -c "import wan_healthcheck.main; print('import ok')"
           wan_healthcheck --help

@@ -17,7 +17,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wan-healthcheck"
-version = "2026.8.14"
+version = "2026.8.14.1"
 description = "Fail a LAN over to a backup router when the WAN degrades but stays up"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -41,15 +41,33 @@ dependencies = [
     "scapy>=2.7.0",
 ]
 
+[project.optional-dependencies]
+# pytest only to get xdist's parallelism; the tests themselves are plain
+# unittest and run fine under `python -m unittest` too.
+dev = [
+    "black>=24",
+    "mypy>=1.14",
+    "pytest>=8",
+    "pytest-xdist>=3",
+]
+
 [project.urls]
 Homepage = "https://github.com/cooperlees/wan_healthcheck"
 Issues = "https://github.com/cooperlees/wan_healthcheck/issues"
 
 [project.scripts]
-wan_healthcheck = "wan_healthcheck:cli"
+wan_healthcheck = "wan_healthcheck.main:cli"
 
 [tool.setuptools]
-py-modules = ["wan_healthcheck"]
+packages = ["wan_healthcheck"]
+
+[tool.black]
+# Pinned so black does not infer a newer target than requires-python and warn
+# that the running interpreter cannot verify its own output.
+target-version = ["py312"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.mypy]
 strict = true
