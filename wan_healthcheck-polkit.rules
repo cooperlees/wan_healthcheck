@@ -1,0 +1,22 @@
+// Install to /etc/polkit-1/rules.d/50-wan_healthcheck.rules
+//
+// Lets the non-root daemon apply and remove its networkd drop-ins.
+// RA suppression is an IPv6SendRA=no drop-in plus `networkctl reload` and
+// `networkctl reconfigure`. Both are needed and they are *separate* polkit
+// actions: reload makes networkd re-read config from disk, reconfigure
+// re-applies it to the link.
+//
+// Granting only reconfigure fails at the reload step in the nastiest way -
+// the drop-in is on disk so it looks applied, but networkd never re-read it,
+// so IPv4 fails over while IPv6 keeps advertising. Check with:
+//   sudo systemd-run --uid=wan_healthcheck --wait --pipe --quiet networkctl reload
+// which must exit 0, not "Access denied ... interactive authentication".
+//
+// Only needed on the armed router; a --dry-run backup never touches networkd.
+polkit.addRule(function (action, subject) {
+    if ((action.id == "org.freedesktop.network1.reload" ||
+         action.id == "org.freedesktop.network1.reconfigure") &&
+        subject.user == "wan_healthcheck") {
+        return polkit.Result.YES;
+    }
+});

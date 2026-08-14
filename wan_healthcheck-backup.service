@@ -1,0 +1,54 @@
+# Backup router: report-only. Probes and reports, never acts.
+#
+# Install to /etc/systemd/system/wan_healthcheck.service on the *backup*.
+# Its only job is to answer the primary's question "do you actually have
+# internet?" before the primary moves clients onto it.
+#
+# It needs neither the polkit rule nor the networkd drop-in directories -
+# --dry-run means it never touches networkd - but it does need the
+# tmpfiles.d entry for /run/wan_healthcheck.
+
+[Unit]
+Description=WAN health check (report-only, backup router)
+Documentation=https://github.com/cooperlees/wan_healthcheck
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=wan_healthcheck
+Group=wan_healthcheck
+
+# --dry-run    : probe, log, serve /metrics and /api/v1/status; act on
+#                nothing. The backup has nothing to fail over to.
+# --interface "" : probe unbound, over whatever route this host would
+#                normally use. Deliberate: the question is "can I reach the
+#                internet at all", not "is one particular link up". Pinning
+#                it reports the backup dead whenever that link is down, which
+#                silently disables the primary's failover.
+ExecStart=/usr/local/venvs/wan_healthcheck/bin/wan_healthcheck \
+  --dry-run \
+  --interface "" \
+  --target-v4 1.1.1.1 --target-v4 8.8.8.8 \
+  --target-v6 2606:4700:4700::1111 --target-v6 2001:4860:4860::8888 \
+  --interval 5 --fall 6 --rise 60 \
+  --family-fail-pct 100 \
+  --heartbeat-s 300 \
+  --track-file /run/wan_healthcheck/wan_weight \
+  --port 42 \
+  --api-url "http://[::1]:42" \
+  monitor
+
+# No CAP_NET_ADMIN and no networkd write access: it does not act.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/wan_healthcheck
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

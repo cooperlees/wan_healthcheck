@@ -256,16 +256,9 @@ Both actions are required. Granting only `reconfigure` fails at the reload
 step in the worst way — the drop-in is on disk so it looks applied, but
 networkd never re-read it, so IPv4 fails over and IPv6 does not.
 
-```javascript
-// /etc/polkit-1/rules.d/50-wan_healthcheck.rules
-polkit.addRule(function (action, subject) {
-    if ((action.id == "org.freedesktop.network1.reload" ||
-         action.id == "org.freedesktop.network1.reconfigure") &&
-        subject.user == "wan_healthcheck") {
-        return polkit.Result.YES;
-    }
-});
-```
+Copy [`wan_healthcheck-polkit.rules`](wan_healthcheck-polkit.rules) to
+`/etc/polkit-1/rules.d/50-wan_healthcheck.rules`.
+
 
 ### 6. A user, and runtime directories it can write
 
@@ -282,12 +275,10 @@ networkctl --json=short status lan0 |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["NetworkFile"])'
 ```
 
-```
-# /etc/tmpfiles.d/wan_healthcheck.conf
-d /run/wan_healthcheck 0755 wan_healthcheck wan_healthcheck -
-f /run/wan_healthcheck/wan_weight 0644 wan_healthcheck wan_healthcheck - 0
-d /run/systemd/network/10-lan0.network.d 0755 wan_healthcheck wan_healthcheck -
-```
+Copy [`wan_healthcheck-tmpfiles.conf`](wan_healthcheck-tmpfiles.conf) to
+`/etc/tmpfiles.d/wan_healthcheck.conf`, adding one `d` line per
+`--ra-interface`.
+
 
 Everything is on `/run` (tmpfs) on purpose: a reboot wipes the drop-ins and
 resets the weight, so the mechanism is **fail-open**. Apply with
@@ -298,55 +289,32 @@ keepalived logs `track file ... not found, ignoring` and runs untracked.
 
 ### 7. systemd units
 
-Primary — armed, probes pinned to the WAN, gated on the backup:
+Two ready-to-edit units ship in this repo:
+
+- [`wan_healthcheck.service`](wan_healthcheck.service) — the **primary**:
+  armed, probes pinned to the WAN, gated on the backup.
+- [`wan_healthcheck-backup.service`](wan_healthcheck-backup.service) — the
+  **backup**: `--dry-run`, probes unbound, acts on nothing.
+
+Copy one to `/etc/systemd/system/wan_healthcheck.service`, adjust the
+interface names and peer URL, then `systemctl enable --now wan_healthcheck`.
+
+Two details in them are worth knowing rather than just copying:
 
 ```ini
-# /etc/systemd/system/wan_healthcheck.service
-[Unit]
-Description=WAN health check
-After=network-online.target systemd-networkd.service keepalived.service
-Wants=network-online.target
-
-[Service]
-User=wan_healthcheck
-Group=wan_healthcheck
-ExecStart=/usr/local/venvs/wan_healthcheck/bin/wan_healthcheck \
+# Pass --interface explicitly even when empty, so the unit is the single
+# source of truth rather than whatever the built-in default happens to be.
   --interface "wan0" \
-  --target-v4 1.1.1.1 --target-v4 8.8.8.8 \
-  --target-v6 2606:4700:4700::1111 --target-v6 2001:4860:4860::8888 \
-  --interval 5 --fall 6 --rise 60 \
-  --ra-interface lan0 \
-  --track-file /run/wan_healthcheck/wan_weight \
-  --peer-url "http://[fd00:1::3]:42" \
-  monitor
 # CAP_NET_RAW: raw ICMPv6 socket for the deprecation RAs, and inherited by
 #   the ping subprocess for -I binding.
-# CAP_NET_BIND_SERVICE: only needed because 42 is a privileged port.
+# CAP_NET_BIND_SERVICE: only because 42 is a privileged port.
 AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_RAW CAP_NET_BIND_SERVICE
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
 ReadWritePaths=/run/wan_healthcheck /run/systemd/network
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
 ```
 
-Backup — report-only, unbound probes, no peer:
-
-```ini
-ExecStart=/usr/local/venvs/wan_healthcheck/bin/wan_healthcheck \
-  --dry-run \
-  --interface "" \
-  --target-v4 1.1.1.1 --target-v4 8.8.8.8 \
-  --target-v6 2606:4700:4700::1111 --target-v6 2001:4860:4860::8888 \
-  --interval 5 --fall 6 --rise 60 \
-  --track-file /run/wan_healthcheck/wan_weight \
-  monitor
-```
+The backup needs neither the polkit rule nor the drop-in directories —
+`--dry-run` means it never touches networkd — but it does need the
+`/run/wan_healthcheck` tmpfiles entry.
 
 ### 8. Choosing probe targets
 

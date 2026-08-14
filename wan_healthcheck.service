@@ -1,0 +1,58 @@
+# Primary router: armed. Acts on a degraded verdict.
+#
+# Install to /etc/systemd/system/wan_healthcheck.service, adjust the
+# interface names and peer URL, then:
+#   systemctl daemon-reload && systemctl enable --now wan_healthcheck
+#
+# Needs the polkit rule and tmpfiles.d config from this directory, or RA
+# suppression silently fails and only IPv4 will fail over.
+
+[Unit]
+Description=WAN health check and failover
+Documentation=https://github.com/cooperlees/wan_healthcheck
+After=network-online.target systemd-networkd.service keepalived.service
+Wants=network-online.target
+
+[Service]
+User=wan_healthcheck
+Group=wan_healthcheck
+
+# --interface  : WAN link to pin probes to. Passed explicitly even if empty,
+#                so this file is the single source of truth rather than
+#                whatever the built-in default happens to be.
+# --ra-interface : LAN interface(s) to stop advertising on. Repeat per
+#                interface. Without any, the IPv6 half does nothing.
+# --peer-url   : the backup's API. Failover is refused while that peer
+#                reports unhealthy. Omit to disable the gate.
+ExecStart=/usr/local/venvs/wan_healthcheck/bin/wan_healthcheck \
+  --interface "wan0" \
+  --target-v4 1.1.1.1 --target-v4 8.8.8.8 \
+  --target-v6 2606:4700:4700::1111 --target-v6 2001:4860:4860::8888 \
+  --interval 5 --fall 6 --rise 60 \
+  --family-fail-pct 100 \
+  --heartbeat-s 300 \
+  --ra-interface lan0 \
+  --track-file /run/wan_healthcheck/wan_weight \
+  --dropin-root /run/systemd/network \
+  --port 42 \
+  --api-url "http://[::1]:42" \
+  --peer-url "http://[2001:db8::2]:42" \
+  monitor
+
+# CAP_NET_RAW: raw ICMPv6 socket for the deprecation RAs, and inherited by
+#   the ping subprocess (ambient caps survive exec) for -I binding.
+# CAP_NET_BIND_SERVICE: only because 42 is a privileged port. Drop it if you
+#   move --port above 1024.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/wan_healthcheck /run/systemd/network
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
